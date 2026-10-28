@@ -1,0 +1,145 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>voicer demo</title>
+<style>
+  body { font-family: system-ui, sans-serif; max-width: 640px; margin: 2rem auto; padding: 0 1rem; background: #111; color: #eee; }
+  h1 { font-size: 1.3rem; }
+  .row { display: flex; gap: .5rem; margin: .6rem 0; flex-wrap: wrap; }
+  button { padding: .6rem 1.2rem; font-size: 1rem; border-radius: 8px; border: 1px solid #555; background: #222; color: #eee; cursor: pointer; }
+  button.on { background: #2a6; border-color: #2a6; color: #000; font-weight: bold; }
+  #status { font-size: .85rem; color: #888; }
+  #partial { color: #8ab; min-height: 1.2em; font-style: italic; }
+  #log { border: 1px solid #333; border-radius: 8px; padding: .8rem; height: 45vh; overflow-y: auto; background: #181818; }
+  .final { margin: .35rem 0; }
+  .you { color: #9cf; }
+  input { flex: 1; padding: .5rem; border-radius: 8px; border: 1px solid #555; background: #222; color: #eee; }
+</style>
+</head>
+<body>
+<h1>voicer</h1>
+<div id="status">connecting…</div>
+<div class="row">
+  <button id="mic">🎙️ Start listening</button>
+  <button id="stop">⏹ Interrupt</button>
+</div>
+<div id="partial"></div>
+<div id="log"></div>
+<div class="row">
+  <input id="text" placeholder="type text to hear it spoken (tests TTS)">
+  <button id="say">Speak</button>
+</div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+let ws, micCtx, playCtx, node, stream, muted = true;
+let nextPlayTime = 0, playing = [];
+let msgId = 0;
+
+function setStatus(s, on) { $("status").textContent = s; }
+
+function connect() {
+  const proto = location.protocol === "https:" ? "wss" : "ws";
+  ws = new WebSocket(`${proto}://${location.host}/ws`);
+  ws.binaryType = "arraybuffer";
+  ws.onopen = () => setStatus("connected");
+  ws.onclose = () => { setStatus("disconnected — retrying in 2s"); setTimeout(connect, 2000); };
+  ws.onmessage = (ev) => {
+    if (typeof ev.data === "string") { handleJson(JSON.parse(ev.data)); return; }
+    playPcm(new Int16Array(ev.data));
+  };
+}
+const send = (o) => ws.readyState === 1 && ws.send(JSON.stringify(o));
+
+function handleJson(m) {
+  switch (m.type) {
+    case "ready": setStatus(`connected · tts ${m.tts_sample_rate} Hz · stt ${m.stt_sample_rate} Hz`); break;
+    case "speech_start":
+      setStatus("listening…");
+      if (playing.length) send({ type: "cancel" });  // barge-in
+      break;
+    case "partial": $("partial").textContent = m.text; break;
+    case "final":
+      $("partial").textContent = "";
+      if (m.text) addLine(m.text, "you");
+      setStatus("connected");
+      break;
+    case "audio_start": break;
+    case "tts_done": break;
+    case "error": addLine("⚠ " + m.message, "err"); break;
+  }
+}
+
+function addLine(text, cls) {
+  const d = document.createElement("div");
+  d.className = "final " + (cls || "");
+  d.textContent = text;
+  $("log").appendChild(d);
+  $("log").scrollTop = 1e9;
+}
+
+// ---- microphone -> 16 kHz mono int16 -> websocket ----
+async function startMic() {
+  stream = await navigator.mediaDevices.getUserMedia({
+    audio: { echoCancellation: true, noiseSuppression: true, channelCount: 1 },
+  });
+  micCtx = new AudioContext({ sampleRate: 16000 });
+  const src = micCtx.createMediaStreamSource(stream);
+  node = micCtx.createScriptProcessor(4096, 1, 1);
+  node.onaudioprocess = (e) => {
+    if (muted || ws.readyState !== 1) return;
+    const f = e.inputChannelData ? e.inputChannelData[0] : e.inputBuffer.getChannelData(0);
+    const i16 = new Int16Array(f.length);
+    for (let i = 0; i < f.length; i++) i16[i] = Math.max(-32768, Math.min(32767, f[i] * 32767));
+    ws.send(i16.buffer);
+  };
+  src.connect(node);
+  node.connect(micCtx.destination); // ScriptProcessor needs a connection to run
+}
+
+$("mic").onclick = async () => {
+  if (!node) await startMic();
+  muted = !muted;
+  $("mic").classList.toggle("on", !muted);
+  $("mic").textContent = muted ? "🎙️ Start listening" : "🎙️ Listening (tap to pause)";
+};
+
+$("stop").onclick = () => {
+  send({ type: "cancel" });
+  playing.forEach((s) => { try { s.stop(); } catch {} });
+  playing = []; nextPlayTime = playCtx ? playCtx.currentTime : 0;
+};
+
+$("say").onclick = () => {
+  const t = $("text").value.trim();
+  if (!t) return;
+  addLine(t, "");
+  send({ type: "speak", id: ++msgId, text: t });
+  $("text").value = "";
+};
+$("text").addEventListener("keydown", (e) => e.key === "Enter" && $("say").click());
+
+// ---- playback: int16 pcm frames scheduled in sequence ----
+async function playPcm(i16) {
+  if (!playCtx) playCtx = new AudioContext({ sampleRate: 22050 });
+  if (playCtx.state === "suspended") await playCtx.resume();
+  const f = new Float32Array(i16.length);
+  for (let i = 0; i < i16.length; i++) f[i] = i16[i] / 32768;
+  const buf = playCtx.createBuffer(1, f.length, playCtx.sampleRate);
+  buf.copyToChannel(f, 0);
+  const src = playCtx.createBufferSource();
+  src.buffer = buf;
+  const t = Math.max(playCtx.currentTime, nextPlayTime);
+  src.connect(playCtx.destination);
+  src.start(t);
+  nextPlayTime = t + buf.duration;
+  playing.push(src);
+  src.onended = () => { playing = playing.filter((s) => s !== src); };
+}
+
+connect();
+</script>
+</body>
+</html>

@@ -3,7 +3,7 @@
 # Usage: scripts/download-models.sh [models-dir]
 set -e
 DIR="${1:-models}"
-mkdir -p "$DIR/moonshine" "$DIR/vad" "$DIR/tts"
+mkdir -p "$DIR/moonshine" "$DIR/moonshine-base" "$DIR/vad" "$DIR/tts"
 
 echo ">> Moonshine tiny (STT, English, ONNX) ~32 MB"
 B="https://huggingface.co/onnx-community/moonshine-tiny-ONNX/resolve/main"
@@ -24,3 +24,9 @@ curl -L --fail -o "$DIR/tts/en_US-amy-medium.onnx" "$V/en_US-amy-medium.onnx"
 curl -L --fail -o "$DIR/tts/en_US-amy-medium.onnx.json" "$V/en_US-amy-medium.onnx.json"
 
 echo "Done. Models in: $DIR"
+
+echo ">> (optional) moonshine-base (better STT, ~105 MB)"
+curl -L --fail -o "$DIR/moonshine-base/encoder_model_quantized.onnx" "https://huggingface.co/onnx-community/moonshine-base-ONNX/resolve/main/onnx/encoder_model_quantized.onnx"
+curl -L --fail -o "$DIR/moonshine-base/decoder_model_quantized.onnx" "https://huggingface.co/onnx-community/moonshine-base-ONNX/resolve/main/onnx/decoder_model_quantized.onnx"
+curl -L --fail -o "$DIR/moonshine-base/decoder_with_past_model_quantized.onnx" "https://huggingface.co/onnx-community/moonshine-base-ONNX/resolve/main/onnx/decoder_with_past_model_quantized.onnx"
+curl -L --fail -o "$DIR/moonshine-base/tokenizer.json" "https://huggingface.co/onnx-community/moonshine-base-ONNX/resolve/main/tokenizer.json"

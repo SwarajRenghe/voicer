@@ -12,6 +12,8 @@ mod sentence;
 mod server;
 mod session;
 mod stt;
+mod stt_engine;
+mod stt_parakeet;
 mod tts;
 mod vad;
 
@@ -35,6 +37,9 @@ struct Args {
     /// Piper voice (file stem inside <models_dir>/tts).
     #[arg(long, default_value = "en_US-amy-medium")]
     voice: String,
+    /// STT backend: moonshine-tiny | moonshine-base | parakeet
+    #[arg(long, default_value = "moonshine-tiny")]
+    stt_model: String,
     /// Disable the speakability filter by default (clients can still toggle it).
     #[arg(long, default_value_t = false)]
     no_filter: bool,
@@ -54,6 +59,7 @@ fn main() -> Result<()> {
         port: args.port,
         models_dir: args.models_dir.clone(),
         voice: args.voice.clone(),
+        stt_model: args.stt_model.clone(),
         default_filter: !args.no_filter,
         partial_interval_ms: args.partial_interval_ms,
         speech_start_threshold: 0.5,
@@ -66,9 +72,22 @@ fn main() -> Result<()> {
     eprintln!("voicer v{}", env!("CARGO_PKG_VERSION"));
 
     let t0 = std::time::Instant::now();
-    let stt = stt::Stt::load(&cfg.models_dir.join("moonshine"))
-        .context("loading STT (moonshine) — run scripts/download-models.sh first")?;
-    eprintln!("  stt: moonshine tiny loaded in {:?}", t0.elapsed());
+    let stt = match cfg.stt_model.as_str() {
+        "parakeet" => stt_engine::SttEngine::Parakeet(
+            stt_parakeet::SttParakeet::load(&cfg.models_dir.join("parakeet"))
+                .context("loading STT (parakeet) — run scripts/download-parakeet.sh first")?,
+        ),
+        "moonshine-tiny" | "moonshine" => stt_engine::SttEngine::Moonshine(
+            stt::Stt::load(&cfg.models_dir.join("moonshine"))
+                .context("loading STT (moonshine) — run scripts/download-models.sh first")?,
+        ),
+        "moonshine-base" => stt_engine::SttEngine::Moonshine(
+            stt::Stt::load(&cfg.models_dir.join("moonshine-base"))
+                .context("loading STT (moonshine-base) — run scripts/download-models.sh first")?,
+        ),
+        other => anyhow::bail!("unknown --stt-model '{other}' (options: moonshine-tiny, moonshine-base, parakeet)"),
+    };
+    eprintln!("  stt: {} loaded in {:?}", cfg.stt_model, t0.elapsed());
 
     let t1 = std::time::Instant::now();
     let tts = tts::Tts::load(&cfg.models_dir.join("tts"), &cfg.voice)

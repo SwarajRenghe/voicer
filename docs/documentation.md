@@ -2,7 +2,9 @@
 
 voicer is a tiny, local voice I/O server for English speech:
 
-- **STT (speech → text):** Moonshine tiny (ONNX, ~28 MB quantized) + Silero VAD (~2 MB)
+- **STT (speech → text):** selectable via `--stt-model`:
+  Moonshine tiny (default, ~28 MB), Moonshine base (~101 MB), or NVIDIA
+  Parakeet TDT 0.6B v3 (~675 MB, multilingual, punctuation + capitalization)
 - **TTS (text → speech):** Piper voices (ONNX, ~60 MB), synthesized sentence-by-sentence
 - **Interface:** one WebSocket endpoint for realtime full-duplex use, two REST
   endpoints for one-shot use, and a built-in browser demo client at `/`
@@ -110,6 +112,17 @@ All three models run through the same ONNX Runtime (via the `ort` crate, rc.12).
 - **A single unified speech-to-speech model** was investigated and rejected:
   nothing practical exists at tiny scale for CPU (Moshi is ~7B; SpeechT5 is
   old and low quality). Two specialized small models is the right trade.
+
+### STT backends
+
+All backends share the same `transcribe(16 kHz f32) -> text` interface
+(`stt_engine.rs`) and are selected at startup with `--stt-model`:
+
+| `--stt-model` | dir | files | size | notes |
+|---|---|---|---|---|
+| `moonshine-tiny` (default) | `models/moonshine` | 3 onnx + tokenizer.json | ~28 MB | English, fastest |
+| `moonshine-base` | `models/moonshine-base` | same layout | ~101 MB | English, better accuracy |
+| `parakeet` | `models/parakeet` | see below | ~675 MB | NVIDIA parakeet-tdt-0.6b-v3 (int8, CC-BY-4.0), 25+ languages, punctuation + caps |
 
 ### Moonshine ONNX contract (as implemented in `stt.rs`)
 
@@ -274,6 +287,35 @@ The build needs only a Rust toolchain; `ort` downloads prebuilt ONNX Runtime
 binaries at build time. On hosts without `pkg-config`/OpenSSL headers (which
 the downloader's HTTP client needs), see the notes in `docs/build-env.md`
 covering the user-local prefix workaround used during development.
+
+### Parakeet ONNX contract (as implemented in `stt_parakeet.rs`)
+
+TDT transducer, greedy decode (files from `ysdede/parakeet-tdt-0.6b-v3-onnx`):
+
+```
+nemo128.onnx (preprocessor)
+  in : waveforms [1, N] f32, waveforms_lens [1] i64
+  out: features [1, 128, T] f32, features_lens [1] i64
+encoder-model.int8.onnx
+  in : audio_signal [1, 128, T] f32, length [1] i64
+  out: outputs [1, D=1024, T'] f32 (NeMo layout: channels second), encoded_lengths [1] i64
+decoder_joint-model.int8.onnx
+  in : encoder_outputs [1, 1024, 1] f32 (single frame),
+       targets [[prev_token_or_blank]] int32, target_length [1] int32,
+       input_states_1/2 [2, 1, 640] f32
+  out: outputs [1, 1, V+5] f32 (V=8193 token logits + 5 duration logits),
+       output_states_1/2  (feed back as input_states_1/2 — names differ!)
+```
+
+Greedy TDT loop: at frame t, token = argmax(logits[..V]), duration =
+argmax(logits[V..]); emit non-blank tokens (updating the LSTM state only on
+emission), advance t by the duration when > 0, else advance on blank or after
+10 emissions. Blank index is found by scanning vocab.txt for `<blk>` (id 8192).
+Gotchas discovered the hard way (keep these if swapping exports):
+- ysdede export uses **int32** for targets/target_length (onnx-asr's reference uses int64)
+- encoder outputs are [1, D, T'] — channels-second, must transpose
+- LSTM state output names (`output_states_*`) differ from input names (`input_states_*`)
+- vocab.txt is `token id` pairs
 
 ## Extending voicer
 

@@ -14,6 +14,11 @@ cargo build --release
 
 Useful flags: `--host 0.0.0.0 --port 8710 --voice en_US-amy-medium --no-filter`.
 
+**STT backends** (`--stt-model`): `moonshine-tiny` (default, ~28 MB, English),
+`moonshine-base` (~101 MB, English, more accurate), `parakeet` (~675 MB,
+NVIDIA Parakeet TDT 0.6B v3 — best accuracy, multilingual, adds punctuation
+and capitalization; requires `scripts/download-parakeet.sh` first).
+
 Try it instantly: open `http://localhost:8710/` in a browser (or on your phone
 via your machine's LAN IP), click **Start listening**, and type something into
 the text box to hear TTS.

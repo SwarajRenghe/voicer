@@ -9,6 +9,8 @@ pub struct Config {
     pub models_dir: PathBuf,
     /// Piper voice file stem inside `<models_dir>/tts`.
     pub voice: String,
+    /// STT backend: "moonshine-tiny" | "moonshine-base" | "parakeet".
+    pub stt_model: String,
     /// Default state of the speakability filter for new connections.
     pub default_filter: bool,
     /// How often (ms) to emit partial transcripts during speech.

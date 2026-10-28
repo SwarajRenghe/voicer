@@ -5,8 +5,8 @@ use crate::audio::{f32_to_i16_bytes, i16_bytes_to_f32};
 use crate::config::{Config, STT_SAMPLE_RATE, VAD_CHUNK};
 use crate::filter::make_speakable;
 use crate::protocol::{ClientMsg, Out, ServerMsg};
+use crate::stt_engine::SttEngine;
 use crate::sentence::SentenceSplitter;
-use crate::stt::Stt;
 use crate::tts::Tts;
 use crate::vad::Vad;
 
@@ -22,7 +22,7 @@ use tokio::sync::mpsc;
 /// State shared across all connections (models are thread-safe).
 #[derive(Clone)]
 pub struct Shared {
-    pub stt: Arc<Stt>,
+    pub stt: Arc<SttEngine>,
     pub tts: Arc<Tts>,
     pub cfg: Arc<Config>,
 }
